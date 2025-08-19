@@ -1,0 +1,61 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  relationMode = "foreignKeys"
+}
+
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum Status {
+  DRAFT
+  PUBLISHED
+}
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  name          String?
+  role          Role      @default(VIEWER)
+  passwordHash  String?   
+  articles      Article[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  @@index([role])
+  @@index([email])
+}
+
+model Article {
+  id          String    @id @default(uuid()) @db.Uuid
+  title       String
+  subtitle    String?
+  slug        String    @unique
+  excerpt     String?
+  content     String
+  category    String
+
+  imageUrl    String?
+  imagePath   String?
+
+  status      Status    @default(DRAFT)
+  authorId    String?   @db.Uuid
+  author      User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+  viewCount   Int       @default(0)
+  @@index([category])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([createdAt])
+  @@index([title])
+}
