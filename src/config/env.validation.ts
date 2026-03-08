@@ -6,7 +6,7 @@ const schema = z.object({
     .string()
     .transform((v) => Number(v))
     .refine((n) => !Number.isNaN(n), 'PORT must be a number')
-    .default(3000),
+    .default('3000'),
 
   // Dev-only JWT secret so you can test in Thunder Client right now.
   // We will replace this with Supabase JWKS verification later.

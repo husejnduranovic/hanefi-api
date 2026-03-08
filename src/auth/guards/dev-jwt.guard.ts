@@ -22,8 +22,8 @@ export class DevJwtGuard implements CanActivate {
     const token = authHeader.substring('Bearer '.length).trim();
 
     try {
-      const user = await this.auth.verifyDevToken(token);
-      req.user = user;
+      // const user = await this.auth.verifyUserToken(token);
+      // req.user = user;
       return true;
     } catch {
       throw new UnauthorizedException('Invalid token');

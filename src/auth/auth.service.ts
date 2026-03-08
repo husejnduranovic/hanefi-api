@@ -1,114 +1,159 @@
+// src/auth/auth.service.ts
 import {
-  ConflictException,
   Injectable,
+  BadRequestException,
   UnauthorizedException,
+  ConflictException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Role } from '@prisma/client';
-import { createSecretKey } from 'crypto';
-import { SignJWT, jwtVerify, JWTPayload } from 'jose';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from 'prisma/prisma.service';
-import * as argon2 from 'argon2';
+import { Prisma } from '@prisma/client';
+
+type JwtPayload = {
+  sub: string;
+  email: string;
+  role: 'ADMIN' | 'EDITOR' | 'VIEWER';
+};
 
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
-    private jwt: JwtService,
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly cfg: ConfigService,
   ) {}
 
-  private get secret() {
-    const key = process.env.JWT_DEV_SECRET ?? 'dev-secret-change-me';
-    return createSecretKey(Buffer.from(key, 'utf-8'));
+  private async hashPassword(p: string) {
+    return bcrypt.hash(p, 12);
+  }
+  private async comparePassword(p: string, h: string) {
+    return bcrypt.compare(p, h);
   }
 
-  private get issuer() {
-    return process.env.JWT_ISSUER ?? 'dev';
-  }
-
-  private get audience() {
-    return process.env.JWT_AUDIENCE ?? 'dev';
-  }
-
-  // ===== LOCAL REGISTER =====
-  async register(
-    email: string,
-    password: string,
-    name?: string,
-    role: Role = Role.EDITOR,
-  ) {
-    const exists = await this.prisma.user.findUnique({ where: { email } });
-    if (exists) throw new ConflictException('Email je već registrovan');
-
-    const passwordHash = await argon2.hash(password);
-    const user = await this.prisma.user.create({
-      data: { email, name: name ?? null, role, passwordHash },
-    });
-    return this.signUserToken(
-      user.id,
-      user.email,
-      user.role,
-      user.name ?? undefined,
-    );
-  }
-
-  // ===== LOCAL LOGIN =====
-  async login(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user || !user.passwordHash)
-      throw new UnauthorizedException('Neispravni kredencijali');
-
-    const ok = await argon2.verify(user.passwordHash, password);
-    if (!ok) throw new UnauthorizedException('Neispravni kredencijali');
-
-    return this.signUserToken(
-      user.id,
-      user.email,
-      user.role,
-      user.name ?? undefined,
-    );
-  }
-
-  signUserToken(userId: string, email: string, role: Role, name?: string) {
-    const payload = { userId, email, role, name: name ?? null };
-    const accessToken = this.jwt.sign(payload, {
-      subject: userId,
-      secret: process.env.JWT_SECRET!,
-      audience: process.env.JWT_AUDIENCE ?? 'app',
-      issuer: process.env.JWT_ISSUER ?? 'app',
-      expiresIn: process.env.JWT_EXPIRES ?? '7d',
-    });
-    return { accessToken };
-  }
-
-  verifyUserToken(token: string) {
-    return this.jwt.verify(token, {
-      secret: process.env.JWT_SECRET!,
-      audience: process.env.JWT_AUDIENCE ?? 'app',
-      issuer: process.env.JWT_ISSUER ?? 'app',
-    });
-  }
-
-  async signDevToken(payload: JWTPayload) {
-    return new SignJWT(payload)
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setIssuer(this.issuer)
-      .setAudience(this.audience)
-      .setExpirationTime('7d')
-      .sign(this.secret);
-  }
-
-  async verifyDevToken(token: string) {
-    const { payload } = await jwtVerify(token, this.secret, {
-      issuer: this.issuer,
-      audience: this.audience,
-    });
-    return payload as JWTPayload & {
-      sub: string;
-      email: string;
-      name?: string;
-      role?: string;
+  private async signAccessToken(user: {
+    id: string;
+    email: string;
+    role: string;
+  }) {
+    const secret = this.cfg.get<string>('JWT_ACCESS_SECRET');
+    if (!secret) throw new Error('JWT_ACCESS_SECRET is missing');
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role as any,
     };
+    const expiresIn = this.cfg.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
+    return this.jwt.signAsync(payload, { secret, expiresIn });
+  }
+
+  private async signRefreshToken(user: {
+    id: string;
+    email: string;
+    role: string;
+  }) {
+    const secret = this.cfg.get<string>('JWT_REFRESH_SECRET');
+    if (!secret) throw new Error('JWT_REFRESH_SECRET is missing');
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role as any,
+    };
+    const expiresIn = this.cfg.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
+    return this.jwt.signAsync(payload, { secret, expiresIn });
+  }
+
+  async register(input: { email: string; name?: string; password: string }) {
+    const passwordHash = await this.hashPassword(input.password);
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          email: input.email,
+          name: input.name ?? null,
+          passwordHash,
+          role: 'VIEWER',
+        },
+        select: { id: true, email: true, role: true, name: true },
+      });
+
+      const [accessToken, refreshToken] = await Promise.all([
+        this.signAccessToken(user),
+        this.signRefreshToken(user),
+      ]);
+
+      return { user, accessToken, refreshToken };
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        // unique constraint violation (email)
+        throw new ConflictException('Email already registered');
+      }
+      throw e;
+    }
+  }
+
+  async login(email: string, password: string) {
+    const u = await this.prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        name: true,
+        passwordHash: true,
+      },
+    });
+    if (!u?.passwordHash)
+      throw new UnauthorizedException('Invalid credentials');
+
+    const ok = await this.comparePassword(password, u.passwordHash);
+    if (!ok) throw new UnauthorizedException('Invalid credentials');
+
+    const user = { id: u.id, email: u.email, role: u.role, name: u.name };
+    const [accessToken, refreshToken] = await Promise.all([
+      this.signAccessToken(user),
+      this.signRefreshToken(user),
+    ]);
+
+    return { user, accessToken, refreshToken }; // <-- REQUIRED
+  }
+
+  async refresh(refreshToken: string) {
+    const payload = await this.jwt.verifyAsync<JwtPayload>(refreshToken, {
+      secret: this.cfg.get<string>('JWT_REFRESH_SECRET')!,
+    });
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, email: true, role: true, name: true },
+    });
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const [accessToken, nextRefreshToken] = await Promise.all([
+      this.signAccessToken(user),
+      this.signRefreshToken(user),
+    ]);
+
+    return { user, accessToken, refreshToken: nextRefreshToken }; // <-- REQUIRED
+  }
+
+  async verifyUserToken(accessToken: string) {
+    try {
+      const payload = await this.jwt.verifyAsync<{ sub: string }>(accessToken, {
+        secret: this.cfg.get<string>('JWT_ACCESS_SECRET')!, // access secret
+      });
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, email: true, role: true, name: true },
+      });
+
+      if (!user) throw new UnauthorizedException('User not found');
+      return user; // attached as req.user by the guard
+    } catch {
+      throw new UnauthorizedException('Invalid token');
+    }
   }
 }

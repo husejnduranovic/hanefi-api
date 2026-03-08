@@ -1,41 +1,29 @@
-import {
-  IsEnum,
-  IsOptional,
-  IsString,
-  MaxLength,
-  MinLength,
-} from 'class-validator';
-import { Status } from '@prisma/client';
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateArticleDto } from './create-article.dto';
+import { Transform, Type } from 'class-transformer';
+import { IsOptional, IsString, IsUUID, IsInt, Min } from 'class-validator';
 
-export class UpdateArticleDto {
+const emptyToUndefined = ({ value }: { value: any }) =>
+  value === '' || value === null ? undefined : value;
+
+export class UpdateArticleDto extends PartialType(CreateArticleDto) {
   @IsOptional()
+  @Transform(emptyToUndefined)
   @IsString()
-  @MinLength(3)
-  @MaxLength(180)
-  title?: string;
+  slug?: string;
 
   @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
+  @IsOptional()
+  @Transform(emptyToUndefined)
   @IsString()
-  @MaxLength(200)
-  subtitle?: string;
+  categoryName?: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(240)
-  excerpt?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(10)
-  content?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(2)
-  @MaxLength(60)
-  category?: string;
-
-  @IsOptional()
-  @IsEnum(Status)
-  status?: Status;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  readTime?: number;
 }

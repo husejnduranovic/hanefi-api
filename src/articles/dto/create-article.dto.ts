@@ -1,38 +1,57 @@
+import { Transform, Type } from 'class-transformer';
 import {
-  IsEnum,
+  IsInt,
   IsOptional,
   IsString,
-  MaxLength,
+  IsUUID,
+  Min,
   MinLength,
 } from 'class-validator';
-import { Status } from '@prisma/client';
+
+const emptyToUndefined = ({ value }: { value: any }) =>
+  value === '' || value === null ? undefined : value;
 
 export class CreateArticleDto {
   @IsString()
   @MinLength(3)
-  @MaxLength(180)
   title!: string;
 
   @IsOptional()
+  @Transform(emptyToUndefined)
   @IsString()
-  @MaxLength(200)
-  subtitle?: string;
+  slug?: string;
 
   @IsOptional()
+  @Transform(emptyToUndefined)
   @IsString()
-  @MaxLength(240)
   excerpt?: string;
 
   @IsString()
-  @MinLength(10)
+  @MinLength(20)
   content!: string;
 
-  @IsString()
-  @MinLength(2)
-  @MaxLength(60)
-  category!: string;
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
 
   @IsOptional()
-  @IsEnum(Status)
-  status?: Status;
+  @Transform(emptyToUndefined)
+  @IsString()
+  categoryName?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  readTime?: number;
+
+  @IsOptional()
+  @Transform(emptyToUndefined)
+  @IsString()
+  status?: 'DRAFT' | 'PUBLISHED';
+
+  @IsOptional()
+  @Transform(emptyToUndefined)
+  @IsString()
+  imageUrl?: string;
 }

@@ -1,14 +1,14 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider     = "postgresql"
-  url          = env("DATABASE_URL")
-  relationMode = "foreignKeys"
+  provider = "postgresql"
 }
 
+/**
+ * -------------------- Enums --------------------
+ */
 enum Role {
   ADMIN
   EDITOR
@@ -20,42 +20,303 @@ enum Status {
   PUBLISHED
 }
 
-model User {
-  id            String    @id @default(uuid()) @db.Uuid
-  email         String    @unique
-  name          String?
-  role          Role      @default(VIEWER)
-  passwordHash  String?   
-  articles      Article[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  @@index([role])
-  @@index([email])
+enum ReactionType {
+  LIKE
+  INSIGHTFUL
+  LOVE
+  THANKS
 }
 
-model Article {
-  id          String    @id @default(uuid()) @db.Uuid
-  title       String
-  subtitle    String?
-  slug        String    @unique
-  excerpt     String?
-  content     String
-  category    String
+enum ContentType {
+  ARTICLE
+  QUESTION
+  REFUTATION
+}
 
+/**
+ * -------------------- Users --------------------
+ */
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  email        String  @unique
+  name         String?
+  role         Role    @default(VIEWER)
+  passwordHash String?
+
+  // authored content
+  articles    Article[]
+  questions   Question[]
+  answers     Answer[]
+  refutations Refutation[]
+
+  // activity
+  comments  Comment[]
+  reactions Reaction[]
+  views     View[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+}
+
+/**
+ * -------------------- Taxonomies --------------------
+ */
+model Category {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  name        String   @unique
+  description String
+  icon        String
   imageUrl    String?
-  imagePath   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  status      Status    @default(DRAFT)
-  authorId    String?   @db.Uuid
-  author      User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
-  
+  articles Article[]
+}
+
+model Topic {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refutations Refutation[]
+}
+
+model Tag {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique
+  slug String @unique
+
+  questions QuestionTag[]
+}
+
+/**
+ * -------------------- Articles --------------------
+ */
+model Article {
+  id       String  @id @default(uuid()) @db.Uuid
+  title    String
+  subtitle String?
+  slug     String  @unique
+  excerpt  String?
+  content  String
+  readTime Int     @default(5)
+
+  imageUrl  String?
+  imagePath String?
+
+  status   Status  @default(DRAFT)
+  authorId String? @db.Uuid
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  categoryId String   @db.Uuid
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  viewCount   Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   publishedAt DateTime?
-  viewCount   Int       @default(0)
-  @@index([category])
+
+  // activity
+  comments  Comment[]
+  reactions Reaction[]
+  views     View[]
+
+  @@index([categoryId])
   @@index([status])
   @@index([publishedAt])
   @@index([createdAt])
   @@index([title])
+}
+
+/**
+ * -------------------- Questions & Answers --------------------
+ */
+model Question {
+  id       String  @id @default(uuid()) @db.Uuid
+  title    String
+  slug     String  @unique
+  body     String
+  status   Status  @default(PUBLISHED)
+  answered Boolean @default(false)
+
+  authorId String? @db.Uuid
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  acceptedAnswerId String? @unique @db.Uuid
+  acceptedAnswer   Answer? @relation("AcceptedAnswer", fields: [acceptedAnswerId], references: [id])
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  // relations
+  answers Answer[]      @relation("QuestionAnswers")
+  tags    QuestionTag[]
+
+  // activity
+  comments  Comment[]
+  reactions Reaction[]
+  views     View[]
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([answered])
+  @@index([title])
+  @@index([publishedAt])
+}
+
+model Answer {
+  id         String  @id @default(uuid()) @db.Uuid
+  body       String
+  isAccepted Boolean @default(false)
+
+  questionId String   @db.Uuid
+  question   Question @relation("QuestionAnswers", fields: [questionId], references: [id], onDelete: Cascade)
+
+  // backref for accepted answer relation (name must match)
+  acceptedIn Question? @relation("AcceptedAnswer")
+
+  authorId String? @db.Uuid
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([questionId, isAccepted])
+}
+
+model QuestionTag {
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId String   @db.Uuid
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId      String   @db.Uuid
+
+  @@id([questionId, tagId])
+}
+
+/**
+ * -------------------- Refutations --------------------
+ */
+model Refutation {
+  id       String  @id @default(uuid()) @db.Uuid
+  title    String
+  slug     String  @unique
+  summary  String
+  content  String
+  imageUrl String?
+  status   Status  @default(PUBLISHED)
+
+  topicId String? @db.Uuid
+  topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  authorId String? @db.Uuid
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  viewCount   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  // activity
+  comments  Comment[]
+  reactions Reaction[]
+  views     View[]
+
+  @@index([topicId])
+  @@index([createdAt])
+  @@index([status])
+  @@index([publishedAt])
+}
+
+/**
+ * -------------------- Activity (Comments, Reactions, Views) --------------------
+ */
+model Comment {
+  id   String @id @default(uuid()) @db.Uuid
+  body String
+
+  articleId    String?     @db.Uuid
+  article      Article?    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  questionId   String?     @db.Uuid
+  question     Question?   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  refutationId String?     @db.Uuid
+  refutation   Refutation? @relation(fields: [refutationId], references: [id], onDelete: Cascade)
+
+  authorId String? @db.Uuid
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  parentId String?   @db.Uuid
+  parent   Comment?  @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[] @relation("CommentThread")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([articleId])
+  @@index([questionId])
+  @@index([refutationId])
+  @@index([createdAt])
+  @@index([parentId])
+}
+
+model Reaction {
+  id   String       @id @default(uuid()) @db.Uuid
+  type ReactionType @default(LIKE)
+
+  articleId    String?     @db.Uuid
+  article      Article?    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  questionId   String?     @db.Uuid
+  question     Question?   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  refutationId String?     @db.Uuid
+  refutation   Refutation? @relation(fields: [refutationId], references: [id], onDelete: Cascade)
+
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  anonKey String?
+
+  createdAt DateTime @default(now())
+
+  // prevent duplicate reactions per user & target
+  @@unique([type, articleId, userId], map: "uniq_reaction_article_user")
+  @@unique([type, questionId, userId], map: "uniq_reaction_question_user")
+  @@unique([type, refutationId, userId], map: "uniq_reaction_refutation_user")
+  @@unique([type, articleId, anonKey], map: "uniq_reaction_article_anon")
+  @@unique([type, questionId, anonKey], map: "uniq_reaction_question_anon")
+  @@unique([type, refutationId, anonKey], map: "uniq_reaction_refutation_anon")
+  @@index([articleId])
+  @@index([questionId])
+  @@index([refutationId])
+  @@index([type])
+}
+
+model View {
+  id          String      @id @default(uuid()) @db.Uuid
+  contentType ContentType
+
+  articleId String?  @db.Uuid
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  questionId String?   @db.Uuid
+  question   Question? @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  refutationId String?     @db.Uuid
+  refutation   Refutation? @relation(fields: [refutationId], references: [id], onDelete: Cascade)
+
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  anonKey   String?
+  createdAt DateTime @default(now())
+
+  @@index([contentType, createdAt])
+  @@index([articleId])
+  @@index([questionId])
+  @@index([refutationId])
+  @@index([userId, createdAt])
 }
